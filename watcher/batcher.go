@@ -1,9 +1,9 @@
-// Copyright © 2013-2015 Steve Francia <spf@spf13.com>.
+// Copyright 2020 The Hugo Authors. All rights reserved.
 //
-// Licensed under the Simple Public License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// http://opensource.org/licenses/Simple-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,42 +16,55 @@ package watcher
 import (
 	"time"
 
-	"gopkg.in/fsnotify.v1"
+	"github.com/fsnotify/fsnotify"
+	"github.com/gohugoio/hugo/watcher/filenotify"
 )
 
+// Batcher batches file watch events in a given interval.
 type Batcher struct {
-	*fsnotify.Watcher
-	interval time.Duration
-	done     chan struct{}
+	filenotify.FileWatcher
+	ticker *time.Ticker
+	done   chan struct{}
 
 	Events chan []fsnotify.Event // Events are returned on this channel
 }
 
-func New(interval time.Duration) (*Batcher, error) {
-	watcher, err := fsnotify.NewWatcher()
+// New creates and starts a Batcher with the given time interval.
+// It will fall back to a poll based watcher if native isn't supported.
+// To always use polling, set poll to true.
+func New(intervalBatcher, intervalPoll time.Duration, poll bool) (*Batcher, error) {
+	var err error
+	var watcher filenotify.FileWatcher
+
+	if poll {
+		watcher = filenotify.NewPollingWatcher(intervalPoll)
+	} else {
+		watcher, err = filenotify.New(intervalPoll)
+	}
+
+	if err != nil {
+		return nil, err
+	}
 
 	batcher := &Batcher{}
-	batcher.Watcher = watcher
-	batcher.interval = interval
+	batcher.FileWatcher = watcher
+	batcher.ticker = time.NewTicker(intervalBatcher)
 	batcher.done = make(chan struct{}, 1)
 	batcher.Events = make(chan []fsnotify.Event, 1)
 
-	if err == nil {
-		go batcher.run()
-	}
+	go batcher.run()
 
-	return batcher, err
+	return batcher, nil
 }
 
 func (b *Batcher) run() {
-	tick := time.Tick(b.interval)
 	evs := make([]fsnotify.Event, 0)
 OuterLoop:
 	for {
 		select {
-		case ev := <-b.Watcher.Events:
+		case ev := <-b.FileWatcher.Events():
 			evs = append(evs, ev)
-		case <-tick:
+		case <-b.ticker.C:
 			if len(evs) == 0 {
 				continue
 			}
@@ -64,7 +77,9 @@ OuterLoop:
 	close(b.done)
 }
 
+// Close stops the watching of the files.
 func (b *Batcher) Close() {
 	b.done <- struct{}{}
-	b.Watcher.Close()
+	b.FileWatcher.Close()
+	b.ticker.Stop()
 }

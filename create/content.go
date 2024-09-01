@@ -1,9 +1,9 @@
-// Copyright © 2014 Steve Francia <spf@spf13.com>.
+// Copyright 2019 The Hugo Authors. All rights reserved.
 //
-// Licensed under the Simple Public License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// http://opensource.org/licenses/Simple-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -11,155 +11,390 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package create provides functions to create new content.
 package create
 
 import (
 	"bytes"
-	"io/ioutil"
+	"errors"
+	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
-	"github.com/spf13/cast"
-	"github.com/spf13/hugo/helpers"
-	"github.com/spf13/hugo/hugofs"
-	"github.com/spf13/hugo/hugolib"
-	"github.com/spf13/hugo/parser"
-	jww "github.com/spf13/jwalterweatherman"
-	"github.com/spf13/viper"
+	"github.com/gohugoio/hugo/hugofs/glob"
+
+	"github.com/gohugoio/hugo/common/hexec"
+	"github.com/gohugoio/hugo/common/hstrings"
+	"github.com/gohugoio/hugo/common/paths"
+
+	"github.com/gohugoio/hugo/hugofs"
+
+	"github.com/gohugoio/hugo/helpers"
+	"github.com/gohugoio/hugo/hugolib"
+	"github.com/spf13/afero"
 )
 
-func NewContent(kind, name string) (err error) {
-	jww.INFO.Println("attempting to create ", name, "of", kind)
+const (
+	// DefaultArchetypeTemplateTemplate is the template used in 'hugo new site'
+	// and the template we use as a fall back.
+	DefaultArchetypeTemplateTemplate = `---
+title: "{{ replace .File.ContentBaseName "-" " " | title }}"
+date: {{ .Date }}
+draft: true
+---
 
-	location := FindArchetype(kind)
+`
+)
 
-	var by []byte
+// NewContent creates a new content file in h (or a full bundle if the archetype is a directory)
+// in targetPath.
+func NewContent(h *hugolib.HugoSites, kind, targetPath string, force bool) error {
+	if _, err := h.BaseFs.Content.Fs.Stat(""); err != nil {
+		return errors.New("no existing content directory configured for this project")
+	}
 
-	if location != "" {
-		by, err = ioutil.ReadFile(location)
+	cf := hugolib.NewContentFactory(h)
+
+	if kind == "" {
+		var err error
+		kind, err = cf.SectionFromFilename(targetPath)
 		if err != nil {
-			jww.ERROR.Println(err)
-		}
-	}
-	if location == "" || err != nil {
-		by = []byte("+++\n title = \"title\"\n draft = true \n+++\n")
-	}
-
-	psr, err := parser.ReadFrom(bytes.NewReader(by))
-	if err != nil {
-		return err
-	}
-	metadata, err := psr.Metadata()
-	if err != nil {
-		return err
-	}
-	newmetadata, err := cast.ToStringMapE(metadata)
-	if err != nil {
-		jww.ERROR.Println("Error processing archetype file:", location)
-		return err
-	}
-
-	for k := range newmetadata {
-		switch strings.ToLower(k) {
-		case "date":
-			newmetadata[k] = time.Now()
-		case "title":
-			newmetadata[k] = helpers.MakeTitle(helpers.Filename(name))
+			return err
 		}
 	}
 
-	caseimatch := func(m map[string]interface{}, key string) bool {
-		for k := range m {
-			if strings.ToLower(k) == strings.ToLower(key) {
-				return true
-			}
+	b := &contentBuilder{
+		archeTypeFs: h.PathSpec.BaseFs.Archetypes.Fs,
+		sourceFs:    h.PathSpec.Fs.Source,
+		ps:          h.PathSpec,
+		h:           h,
+		cf:          cf,
+
+		kind:       kind,
+		targetPath: targetPath,
+		force:      force,
+	}
+
+	ext := paths.Ext(targetPath)
+
+	b.setArcheTypeFilenameToUse(ext)
+
+	withBuildLock := func() (string, error) {
+		unlock, err := h.BaseFs.LockBuild()
+		if err != nil {
+			return "", fmt.Errorf("failed to acquire a build lock: %s", err)
 		}
-		return false
+		defer unlock()
+
+		if b.isDir {
+			return "", b.buildDir()
+		}
+
+		if ext == "" {
+			return "", fmt.Errorf("failed to resolve %q to an archetype template", targetPath)
+		}
+
+		if !h.Conf.ContentTypes().IsContentFile(b.targetPath) {
+			return "", fmt.Errorf("target path %q is not a known content format", b.targetPath)
+		}
+
+		return b.buildFile()
 	}
 
-	if newmetadata == nil {
-		newmetadata = make(map[string]interface{})
-	}
-
-	if !caseimatch(newmetadata, "date") {
-		newmetadata["date"] = time.Now()
-	}
-
-	if !caseimatch(newmetadata, "title") {
-		newmetadata["title"] = helpers.MakeTitle(helpers.Filename(name))
-	}
-
-	page, err := hugolib.NewPage(name)
+	filename, err := withBuildLock()
 	if err != nil {
 		return err
 	}
 
-	if x := parser.FormatSanitize(viper.GetString("MetaDataFormat")); x == "json" || x == "yaml" || x == "toml" {
-		newmetadata["date"] = time.Now().Format(time.RFC3339)
-	}
-
-	//page.Dir = viper.GetString("sourceDir")
-	page.SetSourceMetaData(newmetadata, parser.FormatToLeadRune(viper.GetString("MetaDataFormat")))
-	page.SetSourceContent(psr.Content())
-	if err = page.SafeSaveSourceAs(filepath.Join(viper.GetString("contentDir"), name)); err != nil {
-		return
-	}
-	jww.FEEDBACK.Println(helpers.AbsPathify(filepath.Join(viper.GetString("contentDir"), name)), "created")
-
-	editor := viper.GetString("NewContentEditor")
-
-	if editor != "" {
-		jww.FEEDBACK.Printf("Editing %s in %s.\n", name, editor)
-
-		cmd := exec.Command(editor, path.Join(viper.GetString("contentDir"), name))
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		if err = cmd.Run(); err != nil {
-			return
-		}
+	if filename != "" {
+		return b.openInEditorIfConfigured(filename)
 	}
 
 	return nil
 }
 
-func FindArchetype(kind string) (outpath string) {
-	search := []string{helpers.AbsPathify(viper.GetString("archetypeDir"))}
+type contentBuilder struct {
+	archeTypeFs afero.Fs
+	sourceFs    afero.Fs
 
-	if viper.GetString("theme") != "" {
-		themeDir := filepath.Join(helpers.AbsPathify("themes/"+viper.GetString("theme")), "/archetypes/")
-		if _, err := os.Stat(themeDir); os.IsNotExist(err) {
-			jww.ERROR.Println("Unable to find archetypes directory for theme :", viper.GetString("theme"), "in", themeDir)
-		} else {
-			search = append(search, themeDir)
-		}
+	ps *helpers.PathSpec
+	h  *hugolib.HugoSites
+	cf hugolib.ContentFactory
+
+	// Builder state
+	archetypeFi hugofs.FileMetaInfo
+	targetPath  string
+	kind        string
+	isDir       bool
+	dirMap      archetypeMap
+	force       bool
+}
+
+func (b *contentBuilder) buildDir() error {
+	// Split the dir into content files and the rest.
+	if err := b.mapArcheTypeDir(); err != nil {
+		return err
 	}
 
-	for _, x := range search {
-		// If the new content isn't in a subdirectory, kind == "".
-		// Therefore it should be excluded otherwise `is a directory`
-		// error will occur. github.com/spf13/hugo/issues/411
-		var pathsToCheck []string
+	var contentTargetFilenames []string
+	var baseDir string
 
-		if kind == "" {
-			pathsToCheck = []string{"default.md", "default"}
-		} else {
-			pathsToCheck = []string{kind + ".md", kind, "default.md", "default"}
+	for _, fi := range b.dirMap.contentFiles {
+
+		targetFilename := filepath.Join(b.targetPath, strings.TrimPrefix(fi.Meta().PathInfo.Path(), b.archetypeFi.Meta().PathInfo.Path()))
+
+		// ===> post/my-post/pages/bio.md
+		abs, err := b.cf.CreateContentPlaceHolder(targetFilename, b.force)
+		if err != nil {
+			return err
 		}
-		for _, p := range pathsToCheck {
-			curpath := filepath.Join(x, p)
-			jww.DEBUG.Println("checking", curpath, "for archetypes")
-			if exists, _ := helpers.Exists(curpath, hugofs.SourceFs); exists {
-				jww.INFO.Println("curpath: " + curpath)
-				return curpath
+		if baseDir == "" {
+			baseDir = strings.TrimSuffix(abs, targetFilename)
+		}
+
+		contentTargetFilenames = append(contentTargetFilenames, abs)
+	}
+
+	var contentInclusionFilter *glob.FilenameFilter
+	if !b.dirMap.siteUsed {
+		// We don't need to build everything.
+		contentInclusionFilter = glob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
+			filename = strings.TrimPrefix(filename, string(os.PathSeparator))
+			for _, cn := range contentTargetFilenames {
+				if strings.Contains(cn, filename) {
+					return true
+				}
 			}
+			return false
+		})
+	}
+
+	if err := b.h.Build(hugolib.BuildCfg{NoBuildLock: true, SkipRender: true, ContentInclusionFilter: contentInclusionFilter}); err != nil {
+		return err
+	}
+
+	for i, filename := range contentTargetFilenames {
+		if err := b.applyArcheType(filename, b.dirMap.contentFiles[i]); err != nil {
+			return err
 		}
 	}
 
-	return ""
+	// Copy the rest as is.
+	for _, fi := range b.dirMap.otherFiles {
+		meta := fi.Meta()
+
+		in, err := meta.Open()
+		if err != nil {
+			return fmt.Errorf("failed to open non-content file: %w", err)
+		}
+		targetFilename := filepath.Join(baseDir, b.targetPath, strings.TrimPrefix(fi.Meta().Filename, b.archetypeFi.Meta().Filename))
+		targetDir := filepath.Dir(targetFilename)
+
+		if err := b.sourceFs.MkdirAll(targetDir, 0o777); err != nil && !os.IsExist(err) {
+			return fmt.Errorf("failed to create target directory for %q: %w", targetDir, err)
+		}
+
+		out, err := b.sourceFs.Create(targetFilename)
+		if err != nil {
+			return err
+		}
+
+		_, err = io.Copy(out, in)
+		if err != nil {
+			return err
+		}
+
+		in.Close()
+		out.Close()
+	}
+
+	b.h.Log.Printf("Content dir %q created", filepath.Join(baseDir, b.targetPath))
+
+	return nil
+}
+
+func (b *contentBuilder) buildFile() (string, error) {
+	contentPlaceholderAbsFilename, err := b.cf.CreateContentPlaceHolder(b.targetPath, b.force)
+	if err != nil {
+		return "", err
+	}
+
+	usesSite, err := b.usesSiteVar(b.archetypeFi)
+	if err != nil {
+		return "", err
+	}
+
+	var contentInclusionFilter *glob.FilenameFilter
+	if !usesSite {
+		// We don't need to build everything.
+		contentInclusionFilter = glob.NewFilenameFilterForInclusionFunc(func(filename string) bool {
+			filename = strings.TrimPrefix(filename, string(os.PathSeparator))
+			return strings.Contains(contentPlaceholderAbsFilename, filename)
+		})
+	}
+
+	if err := b.h.Build(hugolib.BuildCfg{NoBuildLock: true, SkipRender: true, ContentInclusionFilter: contentInclusionFilter}); err != nil {
+		return "", err
+	}
+
+	if err := b.applyArcheType(contentPlaceholderAbsFilename, b.archetypeFi); err != nil {
+		return "", err
+	}
+
+	b.h.Log.Printf("Content %q created", contentPlaceholderAbsFilename)
+
+	return contentPlaceholderAbsFilename, nil
+}
+
+func (b *contentBuilder) setArcheTypeFilenameToUse(ext string) {
+	var pathsToCheck []string
+
+	if b.kind != "" {
+		pathsToCheck = append(pathsToCheck, b.kind+ext)
+	}
+
+	pathsToCheck = append(pathsToCheck, "default"+ext)
+
+	for _, p := range pathsToCheck {
+		fi, err := b.archeTypeFs.Stat(p)
+		if err == nil {
+			b.archetypeFi = fi.(hugofs.FileMetaInfo)
+			b.isDir = fi.IsDir()
+			return
+		}
+	}
+}
+
+func (b *contentBuilder) applyArcheType(contentFilename string, archetypeFi hugofs.FileMetaInfo) error {
+	p := b.h.GetContentPage(contentFilename)
+	if p == nil {
+		panic(fmt.Sprintf("[BUG] no Page found for %q", contentFilename))
+	}
+
+	f, err := b.sourceFs.Create(contentFilename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if archetypeFi == nil {
+		return b.cf.ApplyArchetypeTemplate(f, p, b.kind, DefaultArchetypeTemplateTemplate)
+	}
+
+	return b.cf.ApplyArchetypeFi(f, p, b.kind, archetypeFi)
+}
+
+func (b *contentBuilder) mapArcheTypeDir() error {
+	var m archetypeMap
+
+	seen := map[hstrings.Tuple]bool{}
+
+	walkFn := func(path string, fim hugofs.FileMetaInfo) error {
+		if fim.IsDir() {
+			return nil
+		}
+
+		pi := fim.Meta().PathInfo
+
+		if pi.IsContent() {
+			pathLang := hstrings.Tuple{First: pi.PathNoIdentifier(), Second: fim.Meta().Lang}
+			if seen[pathLang] {
+				// Duplicate content file, e.g. page.md and page.html.
+				// In the regular build, we will filter out the duplicates, but
+				// for archetype folders these are ambiguous and we need to
+				// fail.
+				return fmt.Errorf("duplicate content file found in archetype folder: %q; having both e.g. %s.md and %s.html is ambigous", path, pi.BaseNameNoIdentifier(), pi.BaseNameNoIdentifier())
+			}
+			seen[pathLang] = true
+			m.contentFiles = append(m.contentFiles, fim)
+			if !m.siteUsed {
+				var err error
+				m.siteUsed, err = b.usesSiteVar(fim)
+				if err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		m.otherFiles = append(m.otherFiles, fim)
+
+		return nil
+	}
+
+	walkCfg := hugofs.WalkwayConfig{
+		WalkFn: walkFn,
+		Fs:     b.archeTypeFs,
+		Root:   filepath.FromSlash(b.archetypeFi.Meta().PathInfo.Path()),
+	}
+
+	w := hugofs.NewWalkway(walkCfg)
+
+	if err := w.Walk(); err != nil {
+		return fmt.Errorf("failed to walk archetype dir %q: %w", b.archetypeFi.Meta().Filename, err)
+	}
+
+	b.dirMap = m
+
+	return nil
+}
+
+func (b *contentBuilder) openInEditorIfConfigured(filename string) error {
+	editor := b.h.Conf.NewContentEditor()
+	if editor == "" {
+		return nil
+	}
+
+	editorExec := strings.Fields(editor)[0]
+	editorFlags := strings.Fields(editor)[1:]
+
+	var args []any
+	for _, editorFlag := range editorFlags {
+		args = append(args, editorFlag)
+	}
+	args = append(
+		args,
+		filename,
+		hexec.WithStdin(os.Stdin),
+		hexec.WithStderr(os.Stderr),
+		hexec.WithStdout(os.Stdout),
+	)
+
+	b.h.Log.Printf("Editing %q with %q ...\n", filename, editorExec)
+
+	cmd, err := b.h.Deps.ExecHelper.New(editorExec, args...)
+	if err != nil {
+		return err
+	}
+
+	return cmd.Run()
+}
+
+func (b *contentBuilder) usesSiteVar(fi hugofs.FileMetaInfo) (bool, error) {
+	if fi == nil {
+		return false, nil
+	}
+	f, err := fi.Meta().Open()
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	bb, err := io.ReadAll(f)
+	if err != nil {
+		return false, fmt.Errorf("failed to read archetype file: %w", err)
+	}
+
+	return bytes.Contains(bb, []byte(".Site")) || bytes.Contains(bb, []byte("site.")), nil
+}
+
+type archetypeMap struct {
+	// These needs to be parsed and executed as Go templates.
+	contentFiles []hugofs.FileMetaInfo
+	// These are just copied to destination.
+	otherFiles []hugofs.FileMetaInfo
+	// If the templates needs a fully built site. This can potentially be
+	// expensive, so only do when needed.
+	siteUsed bool
 }

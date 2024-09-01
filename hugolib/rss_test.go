@@ -1,75 +1,98 @@
+// Copyright 2019 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package hugolib
 
 import (
-	"bytes"
+	"path/filepath"
+	"strings"
 	"testing"
 
-	"github.com/spf13/afero"
-	"github.com/spf13/hugo/helpers"
-	"github.com/spf13/hugo/hugofs"
-	"github.com/spf13/hugo/source"
-	"github.com/spf13/viper"
+	"github.com/gohugoio/hugo/deps"
 )
 
-const RSS_TEMPLATE = `<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
-  <channel>
-    <title>{{ .Title }} on {{ .Site.Title }} </title>
-    <link>{{ .Permalink }}</link>
-    <language>en-us</language>
-    <author>Steve Francia</author>
-    <rights>Francia; all rights reserved.</rights>
-    <updated>{{ .Date }}</updated>
-    {{ range .Data.Pages }}
-    <item>
-      <title>{{ .Title }}</title>
-      <link>{{ .Permalink }}</link>
-      <pubDate>{{ .Date.Format "Mon, 02 Jan 2006 15:04:05 MST" }}</pubDate>
-      <author>Steve Francia</author>
-      <guid>{{ .Permalink }}</guid>
-      <description>{{ .Content | html }}</description>
-    </item>
-    {{ end }}
-  </channel>
-</rss>`
-
 func TestRSSOutput(t *testing.T) {
-	viper.Reset()
-	defer viper.Reset()
+	t.Parallel()
 
-	rssUri := "customrss.xml"
-	viper.Set("baseurl", "http://auth/bub/")
-	viper.Set("RSSUri", rssUri)
+	rssLimit := len(weightedSources) - 1
 
-	hugofs.DestinationFS = new(afero.MemMapFs)
-	s := &Site{
-		Source: &source.InMemorySource{ByteSource: WEIGHTED_SOURCES},
-	}
-	s.initializeSiteInfo()
-	s.prepTemplates()
+	cfg, fs := newTestCfg()
+	cfg.Set("baseURL", "http://auth/bub/")
+	cfg.Set("title", "RSSTest")
+	cfg.Set("rssLimit", rssLimit)
+	th, configs := newTestHelperFromProvider(cfg, fs, t)
 
-	//  Add an rss.xml template to invoke the rss build.
-	s.addTemplate("rss.xml", RSS_TEMPLATE)
+	rssURI := "index.xml"
 
-	if err := s.CreatePages(); err != nil {
-		t.Fatalf("Unable to create pages: %s", err)
+	for _, src := range weightedSources {
+		writeSource(t, fs, filepath.Join("content", "sect", src[0]), src[1])
 	}
 
-	if err := s.BuildSiteMeta(); err != nil {
-		t.Fatalf("Unable to build site metadata: %s", err)
+	buildSingleSite(t, deps.DepsCfg{Fs: fs, Configs: configs}, BuildCfg{})
+
+	// Home RSS
+	th.assertFileContent(filepath.Join("public", rssURI), "<?xml", "rss version", "RSSTest")
+	// Section RSS
+	th.assertFileContent(filepath.Join("public", "sect", rssURI), "<?xml", "rss version", "Sects on RSSTest")
+	// Taxonomy RSS
+	th.assertFileContent(filepath.Join("public", "categories", "hugo", rssURI), "<?xml", "rss version", "Hugo on RSSTest")
+
+	// RSS Item Limit
+	content := readWorkingDir(t, fs, filepath.Join("public", rssURI))
+	c := strings.Count(content, "<item>")
+	if c != rssLimit {
+		t.Errorf("incorrect RSS item count: expected %d, got %d", rssLimit, c)
 	}
 
-	if err := s.RenderHomePage(); err != nil {
-		t.Fatalf("Unable to RenderHomePage: %s", err)
-	}
+	// Encoded summary
+	th.assertFileContent(filepath.Join("public", rssURI), "<?xml", "description", "A &lt;em&gt;custom&lt;/em&gt; summary")
+}
 
-	file, err := hugofs.DestinationFS.Open(rssUri)
+// Before Hugo 0.49 we set the pseudo page kind RSS on the page when output to RSS.
+// This had some unintended side effects, esp. when the only output format for that page
+// was RSS.
+// For the page kinds that can have multiple output formats, the Kind should be one of the
+// standard home, page etc.
+// This test has this single purpose: Check that the Kind is that of the source page.
+// See https://github.com/gohugoio/hugo/issues/5138
+func TestRSSKind(t *testing.T) {
+	t.Parallel()
 
-	if err != nil {
-		t.Fatalf("Unable to locate: %s", rssUri)
-	}
+	b := newTestSitesBuilder(t)
+	b.WithSimpleConfigFile().WithTemplatesAdded("index.rss.xml", `RSS Kind: {{ .Kind }}`)
 
-	rss := helpers.ReaderToBytes(file)
-	if !bytes.HasPrefix(rss, []byte("<?xml")) {
-		t.Errorf("rss feed should start with <?xml. %s", rss)
-	}
+	b.Build(BuildCfg{})
+
+	b.AssertFileContent("public/index.xml", "RSS Kind: home")
+}
+
+func TestRSSCanonifyURLs(t *testing.T) {
+	t.Parallel()
+
+	b := newTestSitesBuilder(t)
+	b.WithSimpleConfigFile().WithTemplatesAdded("index.rss.xml", `<rss>{{ range .Pages }}<item>{{ .Content | html }}</item>{{ end }}</rss>`)
+	b.WithContent("page.md", `---
+Title: My Page
+---
+
+Figure:
+
+{{< figure src="/images/sunset.jpg" title="Sunset" >}}
+
+
+
+`)
+	b.Build(BuildCfg{})
+
+	b.AssertFileContent("public/index.xml", "img src=&#34;http://example.com/images/sunset.jpg")
 }

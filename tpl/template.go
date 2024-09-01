@@ -1,9 +1,9 @@
-// Copyright © 2013-14 Steve Francia <spf@spf13.com>.
+// Copyright 2019 The Hugo Authors. All rights reserved.
 //
-// Licensed under the Simple Public License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// http://opensource.org/licenses/Simple-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -11,319 +11,246 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package tpl contains template functions and related types.
 package tpl
 
 import (
-	"bytes"
-	"fmt"
-	"github.com/eknkc/amber"
-	bp "github.com/spf13/hugo/bufferpool"
-	"github.com/spf13/hugo/helpers"
-	"github.com/spf13/hugo/hugofs"
-	jww "github.com/spf13/jwalterweatherman"
-	"github.com/yosssi/ace"
-	"html/template"
+	"context"
 	"io"
-	"io/ioutil"
-	"os"
-	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
+	"sync"
+	"unicode"
+
+	bp "github.com/gohugoio/hugo/bufferpool"
+	"github.com/gohugoio/hugo/common/hcontext"
+	"github.com/gohugoio/hugo/identity"
+	"github.com/gohugoio/hugo/langs"
+	"github.com/gohugoio/hugo/output/layouts"
+
+	"github.com/gohugoio/hugo/output"
+
+	htmltemplate "github.com/gohugoio/hugo/tpl/internal/go_templates/htmltemplate"
+	texttemplate "github.com/gohugoio/hugo/tpl/internal/go_templates/texttemplate"
 )
 
-var localTemplates *template.Template
-var tmpl Template
-
-type Template interface {
-	ExecuteTemplate(wr io.Writer, name string, data interface{}) error
-	Lookup(name string) *template.Template
-	Templates() []*template.Template
-	New(name string) *template.Template
-	LoadTemplates(absPath string)
-	LoadTemplatesWithPrefix(absPath, prefix string)
+// TemplateManager manages the collection of templates.
+type TemplateManager interface {
+	TemplateHandler
+	TemplateFuncGetter
 	AddTemplate(name, tpl string) error
-	AddInternalTemplate(prefix, name, tpl string) error
-	AddInternalShortcode(name, tpl string) error
-	PrintErrors()
+	MarkReady() error
 }
 
-type templateErr struct {
-	name string
-	err  error
+// TemplateVariants describes the possible variants of a template.
+// All of these may be empty.
+type TemplateVariants struct {
+	Language     string
+	OutputFormat output.Format
 }
 
-type GoHTMLTemplate struct {
-	template.Template
-	errors []*templateErr
+// TemplateFinder finds templates.
+type TemplateFinder interface {
+	TemplateLookup
+	TemplateLookupVariant
 }
 
-// The "Global" Template System
-func T() Template {
-	if tmpl == nil {
-		tmpl = New()
+// UnusedTemplatesProvider lists unused templates if the build is configured to track those.
+type UnusedTemplatesProvider interface {
+	UnusedTemplates() []FileInfo
+}
+
+// TemplateHandlers holds the templates needed by Hugo.
+type TemplateHandlers struct {
+	Tmpl    TemplateHandler
+	TxtTmpl TemplateParseFinder
+}
+
+type TemplateExecutor interface {
+	ExecuteWithContext(ctx context.Context, t Template, wr io.Writer, data any) error
+}
+
+// TemplateHandler finds and executes templates.
+type TemplateHandler interface {
+	TemplateFinder
+	TemplateExecutor
+	LookupLayout(d layouts.LayoutDescriptor, f output.Format) (Template, bool, error)
+	HasTemplate(name string) bool
+	GetIdentity(name string) (identity.Identity, bool)
+}
+
+type TemplateLookup interface {
+	Lookup(name string) (Template, bool)
+}
+
+type TemplateLookupVariant interface {
+	// TODO(bep) this currently only works for shortcodes.
+	// We may unify and expand this variant pattern to the
+	// other templates, but we need this now for the shortcodes to
+	// quickly determine if a shortcode has a template for a given
+	// output format.
+	// It returns the template, if it was found or not and if there are
+	// alternative representations (output format, language).
+	// We are currently only interested in output formats, so we should improve
+	// this for speed.
+	LookupVariant(name string, variants TemplateVariants) (Template, bool, bool)
+	LookupVariants(name string) []Template
+}
+
+// Template is the common interface between text/template and html/template.
+type Template interface {
+	Name() string
+	Prepare() (*texttemplate.Template, error)
+}
+
+// AddIdentity checks if t is an identity.Identity and returns it if so.
+// Else it wraps it in a templateIdentity using its name as the base.
+func AddIdentity(t Template) Template {
+	if _, ok := t.(identity.IdentityProvider); ok {
+		return t
 	}
-
-	return tmpl
-}
-
-// Resets the internal template state to it's initial state
-func InitializeT() Template {
-	tmpl = New()
-	return tmpl
-}
-
-// Return a new Hugo Template System
-// With all the additional features, templates & functions
-func New() Template {
-	var templates = &GoHTMLTemplate{
-		Template: *template.New(""),
-		errors:   make([]*templateErr, 0),
-	}
-
-	localTemplates = &templates.Template
-
-	templates.Funcs(funcMap)
-	templates.LoadEmbedded()
-	return templates
-}
-
-func Partial(name string, context_list ...interface{}) template.HTML {
-	if strings.HasPrefix("partials/", name) {
-		name = name[8:]
-	}
-	var context interface{}
-
-	if len(context_list) == 0 {
-		context = nil
-	} else {
-		context = context_list[0]
-	}
-	return ExecuteTemplateToHTML(context, "partials/"+name, "theme/partials/"+name)
-}
-
-func ExecuteTemplate(context interface{}, buffer *bytes.Buffer, layouts ...string) {
-	worked := false
-	for _, layout := range layouts {
-
-		name := layout
-
-		if localTemplates.Lookup(name) == nil {
-			name = layout + ".html"
-		}
-
-		if localTemplates.Lookup(name) != nil {
-			err := localTemplates.ExecuteTemplate(buffer, name, context)
-			if err != nil {
-				jww.ERROR.Println(err, "in", name)
-			}
-			worked = true
-			break
-		}
-	}
-	if !worked {
-		jww.ERROR.Println("Unable to render", layouts)
-		jww.ERROR.Println("Expecting to find a template in either the theme/layouts or /layouts in one of the following relative locations", layouts)
+	return templateIdentityProvider{
+		Template: t,
+		id:       identity.StringIdentity(t.Name()),
 	}
 }
 
-func ExecuteTemplateToHTML(context interface{}, layouts ...string) template.HTML {
-	b := bp.GetBuffer()
-	defer bp.PutBuffer(b)
-	ExecuteTemplate(context, b, layouts...)
-	return template.HTML(b.String())
+type templateIdentityProvider struct {
+	Template
+	id identity.Identity
 }
 
-func (t *GoHTMLTemplate) LoadEmbedded() {
-	t.EmbedShortcodes()
-	t.EmbedTemplates()
+func (t templateIdentityProvider) GetIdentity() identity.Identity {
+	return t.id
 }
 
-func (t *GoHTMLTemplate) AddInternalTemplate(prefix, name, tpl string) error {
-	if prefix != "" {
-		return t.AddTemplate("_internal/"+prefix+"/"+name, tpl)
-	} else {
-		return t.AddTemplate("_internal/"+name, tpl)
+// TemplateParser is used to parse ad-hoc templates, e.g. in the Resource chain.
+type TemplateParser interface {
+	Parse(name, tpl string) (Template, error)
+}
+
+// TemplateParseFinder provides both parsing and finding.
+type TemplateParseFinder interface {
+	TemplateParser
+	TemplateFinder
+}
+
+// TemplateDebugger prints some debug info to stdout.
+type TemplateDebugger interface {
+	Debug()
+}
+
+// TemplatesProvider as implemented by deps.Deps.
+type TemplatesProvider interface {
+	Tmpl() TemplateHandler
+	TextTmpl() TemplateParseFinder
+}
+
+var baseOfRe = regexp.MustCompile("template: (.*?):")
+
+func extractBaseOf(err string) string {
+	m := baseOfRe.FindStringSubmatch(err)
+	if len(m) == 2 {
+		return m[1]
 	}
+	return ""
 }
 
-func (t *GoHTMLTemplate) AddInternalShortcode(name, content string) error {
-	return t.AddInternalTemplate("shortcodes", name, content)
+// TemplateFuncGetter allows to find a template func by name.
+type TemplateFuncGetter interface {
+	GetFunc(name string) (reflect.Value, bool)
 }
 
-func (t *GoHTMLTemplate) AddTemplate(name, tpl string) error {
-	_, err := t.New(name).Parse(tpl)
-	if err != nil {
-		t.errors = append(t.errors, &templateErr{name: name, err: err})
-	}
-	return err
+type RenderingContext struct {
+	Site       site
+	SiteOutIdx int
 }
 
-func (t *GoHTMLTemplate) AddTemplateFile(name, baseTemplatePath, path string) error {
-	// get the suffix and switch on that
-	ext := filepath.Ext(path)
-	switch ext {
-	case ".amber":
-		compiler := amber.New()
-		// Parse the input file
-		if err := compiler.ParseFile(path); err != nil {
-			return nil
-		}
+type contextKey string
 
-		if _, err := compiler.CompileWithTemplate(t.New(name)); err != nil {
-			return err
-		}
-	case ".ace":
-		b, err := ioutil.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		var base, inner *ace.File
-
-		name = name[:len(name)-len(ext)] + ".html"
-		if baseTemplatePath != "" {
-			b2, err := ioutil.ReadFile(baseTemplatePath)
-			if err != nil {
-				return err
-			}
-			base = ace.NewFile(baseTemplatePath, b2)
-			inner = ace.NewFile(path, b)
-		} else {
-			base = ace.NewFile(path, b)
-			inner = ace.NewFile("", []byte{})
-		}
-		rslt, err := ace.ParseSource(ace.NewSource(base, inner, []*ace.File{}), nil)
-		if err != nil {
-			t.errors = append(t.errors, &templateErr{name: name, err: err})
-			return err
-		}
-		_, err = ace.CompileResultWithTemplate(t.New(name), rslt, nil)
-		if err != nil {
-			t.errors = append(t.errors, &templateErr{name: name, err: err})
-		}
-		return err
-	default:
-		b, err := ioutil.ReadFile(path)
-		if err != nil {
-			return err
-		}
-
-		return t.AddTemplate(name, string(b))
-	}
-
-	return nil
-
+// Context manages values passed in the context to templates.
+var Context = struct {
+	DependencyManagerScopedProvider    hcontext.ContextDispatcher[identity.DependencyManagerScopedProvider]
+	GetDependencyManagerInCurrentScope func(context.Context) identity.Manager
+	SetDependencyManagerInCurrentScope func(context.Context, identity.Manager) context.Context
+	DependencyScope                    hcontext.ContextDispatcher[int]
+	Page                               hcontext.ContextDispatcher[page]
+	IsInGoldmark                       hcontext.ContextDispatcher[bool]
+}{
+	DependencyManagerScopedProvider: hcontext.NewContextDispatcher[identity.DependencyManagerScopedProvider](contextKey("DependencyManagerScopedProvider")),
+	DependencyScope:                 hcontext.NewContextDispatcher[int](contextKey("DependencyScope")),
+	Page:                            hcontext.NewContextDispatcher[page](contextKey("Page")),
+	IsInGoldmark:                    hcontext.NewContextDispatcher[bool](contextKey("IsInGoldmark")),
 }
 
-func (t *GoHTMLTemplate) GenerateTemplateNameFrom(base, path string) string {
-	name, _ := filepath.Rel(base, path)
-	return filepath.ToSlash(name)
-}
-
-func isDotFile(path string) bool {
-	return filepath.Base(path)[0] == '.'
-}
-
-func isBackupFile(path string) bool {
-	return path[len(path)-1] == '~'
-}
-
-const baseAceFilename = "baseof.ace"
-
-var aceTemplateInnerMarker = []byte("= content")
-
-func isBaseTemplate(path string) bool {
-	return strings.HasSuffix(path, baseAceFilename)
-}
-
-func (t *GoHTMLTemplate) loadTemplates(absPath string, prefix string) {
-	walker := func(path string, fi os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-
-		if fi.Mode()&os.ModeSymlink == os.ModeSymlink {
-			link, err := filepath.EvalSymlinks(absPath)
-			if err != nil {
-				jww.ERROR.Printf("Cannot read symbolic link '%s', error was: %s", absPath, err)
-				return nil
-			}
-			linkfi, err := os.Stat(link)
-			if err != nil {
-				jww.ERROR.Printf("Cannot stat '%s', error was: %s", link, err)
-				return nil
-			}
-			if !linkfi.Mode().IsRegular() {
-				jww.ERROR.Printf("Symbolic links for directories not supported, skipping '%s'", absPath)
-			}
-			return nil
-		}
-
-		if !fi.IsDir() {
-			if isDotFile(path) || isBackupFile(path) || isBaseTemplate(path) {
-				return nil
-			}
-
-			tplName := t.GenerateTemplateNameFrom(absPath, path)
-
-			if prefix != "" {
-				tplName = strings.Trim(prefix, "/") + "/" + tplName
-			}
-
-			var baseTemplatePath string
-
-			// ACE templates may have both a base and inner template.
-			if filepath.Ext(path) == ".ace" && !strings.HasSuffix(filepath.Dir(path), "partials") {
-				// This may be a view that shouldn't have base template
-				// Have to look inside it to make sure
-				needsBase, err := helpers.FileContains(path, aceTemplateInnerMarker, hugofs.OsFs)
-				if err != nil {
-					return err
-				}
-				if needsBase {
-
-					// Look for base template in the follwing order:
-					//   1. <current-path>/<template-name>-baseof.ace, e.g. list-baseof.ace.
-					//   2. <current-path>/baseof.ace
-					//   3. _default/<template-name>-baseof.ace, e.g. list-baseof.ace.
-					//   4. _default/baseof.ace
-
-					currBaseAceFilename := fmt.Sprintf("%s-%s", helpers.Filename(path), baseAceFilename)
-					templateDir := filepath.Dir(path)
-
-					pathsToCheck := []string{
-						filepath.Join(templateDir, currBaseAceFilename),
-						filepath.Join(templateDir, baseAceFilename),
-						filepath.Join(absPath, "_default", currBaseAceFilename),
-						filepath.Join(absPath, "_default", baseAceFilename)}
-
-					for _, pathToCheck := range pathsToCheck {
-						if ok, err := helpers.Exists(pathToCheck, hugofs.OsFs); err == nil && ok {
-							baseTemplatePath = pathToCheck
-							break
-						}
-					}
-				}
-			}
-
-			t.AddTemplateFile(tplName, baseTemplatePath, path)
-
+func init() {
+	Context.GetDependencyManagerInCurrentScope = func(ctx context.Context) identity.Manager {
+		idmsp := Context.DependencyManagerScopedProvider.Get(ctx)
+		if idmsp != nil {
+			return idmsp.GetDependencyManagerForScope(Context.DependencyScope.Get(ctx))
 		}
 		return nil
 	}
-
-	filepath.Walk(absPath, walker)
 }
 
-func (t *GoHTMLTemplate) LoadTemplatesWithPrefix(absPath string, prefix string) {
-	t.loadTemplates(absPath, prefix)
+type page interface {
+	IsNode() bool
 }
 
-func (t *GoHTMLTemplate) LoadTemplates(absPath string) {
-	t.loadTemplates(absPath, "")
+type site interface {
+	Language() *langs.Language
 }
 
-func (t *GoHTMLTemplate) PrintErrors() {
-	for _, e := range t.errors {
-		jww.ERROR.Println(e.err)
+const (
+	HugoDeferredTemplatePrefix = "__hdeferred/"
+	HugoDeferredTemplateSuffix = "__d="
+)
+
+const hugoNewLinePlaceholder = "___hugonl_"
+
+var stripHTMLReplacerPre = strings.NewReplacer("\n", " ", "</p>", hugoNewLinePlaceholder, "<br>", hugoNewLinePlaceholder, "<br />", hugoNewLinePlaceholder)
+
+// StripHTML strips out all HTML tags in s.
+func StripHTML(s string) string {
+	// Shortcut strings with no tags in them
+	if !strings.ContainsAny(s, "<>") {
+		return s
 	}
+
+	pre := stripHTMLReplacerPre.Replace(s)
+	preReplaced := pre != s
+
+	s = htmltemplate.StripTags(pre)
+
+	if preReplaced {
+		s = strings.ReplaceAll(s, hugoNewLinePlaceholder, "\n")
+	}
+
+	var wasSpace bool
+	b := bp.GetBuffer()
+	defer bp.PutBuffer(b)
+	for _, r := range s {
+		isSpace := unicode.IsSpace(r)
+		if !(isSpace && wasSpace) {
+			b.WriteRune(r)
+		}
+		wasSpace = isSpace
+	}
+
+	if b.Len() > 0 {
+		s = b.String()
+	}
+
+	return s
+}
+
+type DeferredExecution struct {
+	Mu           sync.Mutex
+	Ctx          context.Context
+	TemplateName string
+	Data         any
+
+	Executed bool
+	Result   string
 }

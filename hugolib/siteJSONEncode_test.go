@@ -1,8 +1,19 @@
+// Copyright 2019 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package hugolib
 
 import (
-	"encoding/json"
-	"fmt"
 	"testing"
 )
 
@@ -10,23 +21,24 @@ import (
 // Testing prevention of cyclic refs in JSON encoding
 // May be smart to run with: -timeout 4000ms
 func TestEncodePage(t *testing.T) {
+	t.Parallel()
 
-	// borrowed from menu_test.go
-	s := createTestSite(MENU_PAGE_SOURCES)
-	testSiteSetup(s, t)
+	templ := `Page: |{{ index .Site.RegularPages 0 | jsonify }}|
+Site: {{ site | jsonify }}
+`
 
-	j, err := json.Marshal(s)
-	check(t, err)
-	fmt.Println("Site as JSON", string(j))
+	b := newTestSitesBuilder(t)
+	b.WithSimpleConfigFile().WithTemplatesAdded("index.html", templ)
+	b.WithContent("page.md", `---
+title: "Page"
+date: 2019-02-28
+---
 
-	p, err := json.Marshal(s.Pages[0])
-	check(t, err)
-	fmt.Println("Page as JSON", string(p))
+Content.
 
-}
+`)
 
-func check(t *testing.T, err error) {
-	if err != nil {
-		t.Fatalf("Failed %s", err)
-	}
+	b.Build(BuildCfg{})
+
+	b.AssertFileContent("public/index.html", `"Date":"2019-02-28T00:00:00Z"`)
 }

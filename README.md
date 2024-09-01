@@ -1,140 +1,300 @@
-![Hugo](https://raw.githubusercontent.com/spf13/hugo/master/docs/static/img/hugo-logo.png)
+[bep]: https://github.com/bep
+[bugs]: https://github.com/gohugoio/hugo/issues?q=is%3Aopen+is%3Aissue+label%3ABug
+[contributing]: CONTRIBUTING.md
+[create a proposal]: https://github.com/gohugoio/hugo/issues/new?labels=Proposal%2C+NeedsTriage&template=feature_request.md
+[documentation repository]: https://github.com/gohugoio/hugoDocs
+[documentation]: https://gohugo.io/documentation
+[dragonfly bsd, freebsd, netbsd, and openbsd]: https://gohugo.io/installation/bsd
+[features]: https://gohugo.io/about/features/
+[forum]: https://discourse.gohugo.io
+[friends]: https://github.com/gohugoio/hugo/graphs/contributors
+[go]: https://go.dev/
+[hugo modules]: https://gohugo.io/hugo-modules/
+[installation]: https://gohugo.io/installation
+[issue queue]: https://github.com/gohugoio/hugo/issues
+[linux]: https://gohugo.io/installation/linux
+[macos]: https://gohugo.io/installation/macos
+[prebuilt binary]: https://github.com/gohugoio/hugo/releases/latest
+[requesting help]: https://discourse.gohugo.io/t/requesting-help/9132
+[spf13]: https://github.com/spf13
+[static site generator]: https://en.wikipedia.org/wiki/Static_site_generator
+[support]: https://discourse.gohugo.io
+[themes]: https://themes.gohugo.io/
+[website]: https://gohugo.io
+[windows]: https://gohugo.io/installation/windows
 
-A Fast and Flexible Static Site Generator built with love by [spf13](http://spf13.com/) and [friends](https://github.com/spf13/hugo/graphs/contributors) in [Go][].
+<a href="https://gohugo.io/"><img src="https://raw.githubusercontent.com/gohugoio/gohugoioTheme/master/static/images/hugo-logo-wide.svg?sanitize=true" alt="Hugo" width="565"></a>
 
-[Website](http://gohugo.io) |
-[Forum](https://discuss.gohugo.io) |
-[Chat](https://gitter.im/spf13/hugo) |
-[Documentation](http://gohugo.io/overview/introduction/) |
-[Installation Guide](http://gohugo.io/overview/installing/) |
-[Twitter](http://twitter.com/spf13)
+A fast and flexible static site generator built with love by [bep], [spf13], and [friends] in [Go].
 
-[![Build Status](https://travis-ci.org/spf13/hugo.png)](https://travis-ci.org/spf13/hugo) [![wercker status](https://app.wercker.com/status/1a0de7d703ce3b80527f00f675e1eb32 "wercker status")](https://app.wercker.com/project/bykey/1a0de7d703ce3b80527f00f675e1eb32) [![Build status](https://ci.appveyor.com/api/projects/status/n2mo912b8s2505e8/branch/master?svg=true)](https://ci.appveyor.com/project/spf13/hugo/branch/master) [![Join the chat at https://gitter.im/spf13/hugo](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/spf13/hugo?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
+---
+
+[![GoDoc](https://godoc.org/github.com/gohugoio/hugo?status.svg)](https://godoc.org/github.com/gohugoio/hugo)
+[![Tests on Linux, MacOS and Windows](https://github.com/gohugoio/hugo/workflows/Test/badge.svg)](https://github.com/gohugoio/hugo/actions?query=workflow%3ATest)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gohugoio/hugo)](https://goreportcard.com/report/github.com/gohugoio/hugo)
+
+[Website] | [Installation] | [Documentation] | [Support] | [Contributing] | <a rel="me" href="https://fosstodon.org/@gohugoio">Mastodon</a> | <a rel="me" href="https://x.com/gohugoiov2">X</a>
 
 ## Overview
 
-Hugo is a static site generator written in [Go][]. It is optimized for speed, easy use and configurability. Hugo takes a directory with content and templates and renders them into a full HTML website.
+Hugo is a [static site generator] written in [Go], optimized for speed and designed for flexibility. With its advanced templating system and fast asset pipelines, Hugo renders a complete site in seconds, often less.
 
-Hugo relies on Markdown files with front matter for meta data. And you can run Hugo from any directory. This works well for shared hosts and other systems where you don’t have a privileged account.
+Due to its flexible framework, multilingual support, and powerful taxonomy system, Hugo is widely used to create:
 
-Hugo renders a typical website of moderate size in a fraction of a second. A good rule of thumb is that each piece of content renders in around 1 millisecond.
+- Corporate, government, nonprofit, education, news, event, and project sites
+- Documentation sites
+- Image portfolios
+- Landing pages
+- Business, professional, and personal blogs
+- Resumes and CVs
 
-Hugo is meant to work well for any kind of website including blogs, tumbles and docs.
+Use Hugo's embedded web server during development to instantly see changes to content, structure, behavior, and presentation. Then deploy the site to your host, or push changes to your Git provider for automated builds and deployment.
 
-#### Supported Architectures
+Hugo's fast asset pipelines include:
 
-Currently, we provide pre-built Hugo binaries for Windows, Linux, FreeBSD, NetBSD and OS&nbsp;X (Darwin) for x64, i386 and ARM architectures.
+- Image processing &ndash; Convert, resize, crop, rotate, adjust colors, apply filters, overlay text and images, and extract EXIF data
+- JavaScript bundling &ndash; Transpile TypeScript and JSX to JavaScript, bundle, tree shake, minify, create source maps, and perform SRI hashing.
+- Sass processing &ndash; Transpile Sass to CSS, bundle, tree shake, minify, create source maps, perform SRI hashing, and integrate with PostCSS
+- Tailwind CSS processing &ndash; Compile Tailwind CSS utility classes into standard CSS, bundle, tree shake, optimize, minify, perform SRI hashing, and integrate with PostCSS
 
-Hugo may also be compiled from source wherever the Go compiler tool chain can run, e.g. for other operating systems including DragonFly BSD, OpenBSD, Plan&nbsp;9 and Solaris.
+And with [Hugo Modules], you can share content, assets, data, translations, themes, templates, and configuration with other projects via public or private Git repositories.
 
-**Complete documentation is available at [Hugo Documentation](http://gohugo.io/).**
+See the [features] section of the documentation for a comprehensive summary of Hugo's capabilities.
 
-## Choose How to Install
+## Sponsors
 
-If you want to use Hugo as your site generator, simply install the Hugo binaries. The Hugo binaries have no external dependencies.
+<p>&nbsp;</p>
+<p float="left">
+  <a href="https://www.linode.com/?utm_campaign=hugosponsor&utm_medium=banner&utm_source=hugogithub" target="_blank"><img src="https://raw.githubusercontent.com/gohugoio/gohugoioTheme/master/assets/images/sponsors/linode-logo_standard_light_medium.png" width="200" alt="Linode"></a>
+&nbsp;&nbsp;&nbsp;
+  <a href="https://route4me.com/" target="_blank"><img src="https://raw.githubusercontent.com/gohugoio/gohugoioTheme/master/assets/images/sponsors/Route4MeLogoBlueOnWhite.svg" width="200" alt="Route Planning & Route Optimization Software"></a>
+</p>
 
-To contribute to the Hugo source code or documentation, you should fork the Hugo GitHub project and clone it to your local machine.
+## Installation
 
-Finally, you can install the Hugo source code with `go`, build the binaries yourself, and run Hugo that way. Building the binaries is an easy task for an experienced `go` getter.
+Install Hugo from a [prebuilt binary], package manager, or package repository. Please see the installation instructions for your operating system:
 
-### Install Hugo as Your Site Generator (Binary Install)
+- [macOS]
+- [Linux]
+- [Windows]
+- [DragonFly BSD, FreeBSD, NetBSD, and OpenBSD]
 
-Use the [installation instructions in the Hugo documentation](http://gohugo.io/overview/installing/).
+## Build from source
 
-### Clone the Hugo Project (Contributor)
+Hugo is available in two editions: standard and extended. With the extended edition you can:
 
-1. Make sure your local environment has the following software installed:
+- Encode to the WebP format when processing images. You can decode WebP images with either edition.
+- Transpile Sass to CSS using the embedded LibSass transpiler. The extended edition is not required to use the Dart Sass transpiler.
 
-    * [Git](http://git-scm.com/)
-    * [Mercurial](http://mercurial.selenic.com/)
-    * [Go][] 1.3+ (Go 1.4+ on Windows, see Go [Issue #8090](https://code.google.com/p/go/issues/detail?id=8090))
+Prerequisites to build Hugo from source:
 
-2. Fork the [Hugo project on GitHub](https://github.com/spf13/hugo).
+- Standard edition: Go 1.20 or later
+- Extended edition: Go 1.20 or later, and GCC
 
-3. Clone your fork:
+Build the standard edition:
 
-        git clone https://github.com/YOURNAME/hugo
+```text
+go install github.com/gohugoio/hugo@latest
+```
 
-4. Change into the `hugo` directory:
+Build the extended edition:
 
-        cd hugo
+```text
+CGO_ENABLED=1 go install -tags extended github.com/gohugoio/hugo@latest
+```
+## Star History
 
-5. Install the Hugo project’s package dependencies:
+[![Star History Chart](https://api.star-history.com/svg?repos=gohugoio/hugo&type=Timeline)](https://star-history.com/#gohugoio/hugo&Timeline)
 
-        go get -u -v github.com/spf13/hugo
+## Documentation
 
-6. Use a symbolic link to add your locally cloned Hugo repository to your `$GOPATH`, assuming you prefer doing development work outside of `$GOPATH`:
+Hugo's [documentation] includes installation instructions, a quick start guide, conceptual explanations, reference information, and examples.
 
-        rm -rf "$GOPATH/src/github.com/spf13/hugo"
-        ln -s `pwd` "$GOPATH/src/github.com/spf13/hugo"
+Please submit documentation issues and pull requests to the [documentation repository].
 
-    Go expects all of your libraries to be found in`$GOPATH`.
+## Support
 
-### Build and Install the Binaries from Source (Advanced Install)
+Please **do not use the issue queue** for questions or troubleshooting. Unless you are certain that your issue is a software defect, use the [forum].
 
-Add Hugo and its package dependencies to your go `src` directory.
+Hugo’s [forum] is an active community of users and developers who answer questions, share knowledge, and provide examples. A quick search of over 20,000 topics will often answer your question. Please be sure to read about [requesting help] before asking your first question.
 
-    go get -v github.com/spf13/hugo
+## Contributing
 
-Once the `get` completes, you should find your new `hugo` (or `hugo.exe`) executable sitting inside `$GOPATH/bin/`.
+You can contribute to the Hugo project by:
 
-To update Hugo’s dependencies, use `go get` with the `-u` option.
+- Answering questions on the [forum]
+- Improving the [documentation]
+- Monitoring the [issue queue]
+- Creating or improving [themes]
+- Squashing [bugs]
 
-    go get -u -v github.com/spf13/hugo
+Please submit documentation issues and pull requests to the [documentation repository].
 
-## Contributing to Hugo
+If you have an idea for an enhancement or new feature, create a new topic on the [forum] in the "Feature" category. This will help you to:
 
-We welcome contributions to Hugo of any kind including documentation, themes, organization, tutorials, blog posts, bug reports, issues, feature requests, feature implementation, pull requests, answering questions on the forum, helping to manage issues, etc. The Hugo community and maintainers are very active and helpful and the project benefits greatly from this activity.
+- Determine if the capability already exists
+- Measure interest
+- Refine the concept
 
-[![Throughput Graph](https://graphs.waffle.io/spf13/hugo/throughput.svg)](https://waffle.io/spf13/hugo/metrics)
+If there is sufficient interest, [create a proposal]. Do not submit a pull request until the project lead accepts the proposal.
 
-If you have any questions about how to contribute or what to contribute please ask on the [forum](http://discuss.gohugo.io)
+For a complete guide to contributing to Hugo, see the [Contribution Guide](CONTRIBUTING.md).
 
-## Code Contribution Guideline
+## Dependencies
 
-We welcome your contributions. To make the process as seamless as possible, we ask for the following:
+Hugo stands on the shoulders of great open source libraries. Run `hugo env --logLevel info` to display a list of dependencies.
 
-* Go ahead and fork the project and make your changes. We encourage pull requests to discuss code changes.
-* When you’re ready to create a pull request, be sure to:
-     * Have test cases for the new code. If you have questions about how to do it, please ask in your pull request.
-     * Run `go fmt`
-     * Squash your commits into a single commit. `git rebase -i`. It’s okay to force update your pull request.
-     * This [blog article](http://chris.beams.io/posts/git-commit/) is a good resource for learning how to write good commit messages, the most important part being that each commit message should have a title/subject in imperative mode without trailing period: *"Return error on wrong use of the Paginator"*, **NOT** *"Returning some error."* Also, if your commit references one or more GitHub issues, always end your commit message body with *See #1234* or *Fixes #1234*. Replace *1234* with the GitHub issue ID. The last example will close the issue when the commit is merged into *master*.
-     * Make sure `go test ./...` passes, and `go build` completes. Our [Travis CI loop](https://travis-ci.org/spf13/hugo) (Linux) and [AppVeyor](https://ci.appveyor.com/project/spf13/hugo/branch/master) (Windows) will catch most things that are missing. 
+<details>
+<summary>See current dependencies</summary>
 
-### Building Hugo with Your Changes
-
-    cd /path/to/hugo
-    go build -o hugo main.go
-    mv hugo /usr/local/bin/
-
-### Adding compile information to Hugo
-
-When Hugo is built using the above steps, the `version` sub-command will include the `mdate` of the Hugo executable, similar to the following:
-
-    Hugo Static Site Generator v0.13-DEV buildDate: 2014-12-24T04:46:03-07:00
-
-Instead, it is possible to have the `version` sub-command return information about the git commit used and time of compilation using `build` flags.
-
-To do this, replace the `go build` command with the following *(replace `/path/to/hugo` with the actual path)*:
-
-    go build -ldflags "-X /path/to/hugo/hugolib.CommitHash `git rev-parse --short HEAD 2>/dev/null` -X github.com/spf13/hugo/hugolib.BuildDate `date +%FT%T%z`"
-
-This will result in `hugo version` output that looks similar to:
-
-    Hugo Static Site Generator v0.13-DEV-8042E77 buildDate: 2014-12-25T03:25:57-07:00
-
-Alternatively, just run `make` &mdash; all the “magic” above is already in the `Makefile`.  :wink:
-
-### Running Hugo
-
-    cd /path/to/hugo
-    go install github.com/spf13/hugo/hugolib
-    go run main.go
-
-**Complete documentation is available at [Hugo Documentation](http://gohugo.io/).**
-
-[![Analytics](https://ga-beacon.appspot.com/UA-7131036-6/hugo/readme)](https://github.com/igrigorik/ga-beacon)
-[![Bitdeli Badge](https://d2weczhvl823v0.cloudfront.net/spf13/hugo/trend.png)](https://bitdeli.com/free "Bitdeli Badge")
-
-[Go]: http://golang.org/
+```text
+cloud.google.com/go/compute/metadata="v0.2.3"
+cloud.google.com/go/iam="v1.1.5"
+cloud.google.com/go/storage="v1.35.1"
+cloud.google.com/go="v0.110.10"
+github.com/Azure/azure-sdk-for-go/sdk/azcore="v1.9.0"
+github.com/Azure/azure-sdk-for-go/sdk/azidentity="v1.4.0"
+github.com/Azure/azure-sdk-for-go/sdk/internal="v1.5.0"
+github.com/Azure/azure-sdk-for-go/sdk/storage/azblob="v1.2.0"
+github.com/Azure/go-autorest/autorest/to="v0.4.0"
+github.com/AzureAD/microsoft-authentication-library-for-go="v1.2.0"
+github.com/BurntSushi/locker="v0.0.0-20171006230638-a6e239ea1c69"
+github.com/alecthomas/chroma/v2="v2.14.0"
+github.com/armon/go-radix="v1.0.1-0.20221118154546-54df44f2176c"
+github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream="v1.5.4"
+github.com/aws/aws-sdk-go-v2/config="v1.26.1"
+github.com/aws/aws-sdk-go-v2/credentials="v1.16.12"
+github.com/aws/aws-sdk-go-v2/feature/ec2/imds="v1.14.10"
+github.com/aws/aws-sdk-go-v2/feature/s3/manager="v1.15.7"
+github.com/aws/aws-sdk-go-v2/internal/configsources="v1.3.5"
+github.com/aws/aws-sdk-go-v2/internal/endpoints/v2="v2.6.5"
+github.com/aws/aws-sdk-go-v2/internal/ini="v1.7.2"
+github.com/aws/aws-sdk-go-v2/internal/v4a="v1.2.9"
+github.com/aws/aws-sdk-go-v2/service/cloudfront="v1.35.4"
+github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding="v1.10.4"
+github.com/aws/aws-sdk-go-v2/service/internal/checksum="v1.2.9"
+github.com/aws/aws-sdk-go-v2/service/internal/presigned-url="v1.10.9"
+github.com/aws/aws-sdk-go-v2/service/internal/s3shared="v1.16.9"
+github.com/aws/aws-sdk-go-v2/service/s3="v1.47.5"
+github.com/aws/aws-sdk-go-v2/service/sso="v1.18.5"
+github.com/aws/aws-sdk-go-v2/service/ssooidc="v1.21.5"
+github.com/aws/aws-sdk-go-v2/service/sts="v1.26.5"
+github.com/aws/aws-sdk-go-v2="v1.26.1"
+github.com/aws/aws-sdk-go="v1.50.7"
+github.com/aws/smithy-go="v1.20.2"
+github.com/bep/clocks="v0.5.0"
+github.com/bep/debounce="v1.2.0"
+github.com/bep/gitmap="v1.1.2"
+github.com/bep/goat="v0.5.0"
+github.com/bep/godartsass/v2="v2.0.0"
+github.com/bep/godartsass="v1.2.0"
+github.com/bep/golibsass="v1.1.1"
+github.com/bep/gowebp="v0.3.0"
+github.com/bep/lazycache="v0.4.0"
+github.com/bep/logg="v0.4.0"
+github.com/bep/mclib="v1.20400.20402"
+github.com/bep/overlayfs="v0.9.2"
+github.com/bep/simplecobra="v0.4.0"
+github.com/bep/tmc="v0.5.1"
+github.com/clbanning/mxj/v2="v2.7.0"
+github.com/cli/safeexec="v1.0.1"
+github.com/cpuguy83/go-md2man/v2="v2.0.3"
+github.com/disintegration/gift="v1.2.1"
+github.com/dlclark/regexp2="v1.11.0"
+github.com/dustin/go-humanize="v1.0.1"
+github.com/evanw/esbuild="v0.21.4"
+github.com/fatih/color="v1.16.0"
+github.com/frankban/quicktest="v1.14.6"
+github.com/fsnotify/fsnotify="v1.7.0"
+github.com/getkin/kin-openapi="v0.123.0"
+github.com/ghodss/yaml="v1.0.0"
+github.com/go-openapi/jsonpointer="v0.20.2"
+github.com/go-openapi/swag="v0.22.8"
+github.com/gobuffalo/flect="v1.0.2"
+github.com/gobwas/glob="v0.2.3"
+github.com/gohugoio/go-i18n/v2="v2.1.3-0.20230805085216-e63c13218d0e"
+github.com/gohugoio/httpcache="v0.7.0"
+github.com/gohugoio/hugo-goldmark-extensions/extras="v0.2.0"
+github.com/gohugoio/hugo-goldmark-extensions/passthrough="v0.2.0"
+github.com/gohugoio/locales="v0.14.0"
+github.com/gohugoio/localescompressed="v1.0.1"
+github.com/golang-jwt/jwt/v5="v5.1.0"
+github.com/golang/groupcache="v0.0.0-20210331224755-41bb18bfe9da"
+github.com/golang/protobuf="v1.5.3"
+github.com/google/go-cmp="v0.6.0"
+github.com/google/s2a-go="v0.1.7"
+github.com/google/uuid="v1.4.0"
+github.com/google/wire="v0.5.0"
+github.com/googleapis/enterprise-certificate-proxy="v0.3.2"
+github.com/googleapis/gax-go/v2="v2.12.0"
+github.com/gorilla/websocket="v1.5.1"
+github.com/hairyhenderson/go-codeowners="v0.4.0"
+github.com/hashicorp/golang-lru/v2="v2.0.7"
+github.com/invopop/yaml="v0.2.0"
+github.com/jdkato/prose="v1.2.1"
+github.com/jmespath/go-jmespath="v0.4.0"
+github.com/josharian/intern="v1.0.0"
+github.com/kr/pretty="v0.3.1"
+github.com/kr/text="v0.2.0"
+github.com/kylelemons/godebug="v1.1.0"
+github.com/kyokomi/emoji/v2="v2.2.12"
+github.com/mailru/easyjson="v0.7.7"
+github.com/makeworld-the-better-one/dither/v2="v2.4.0"
+github.com/marekm4/color-extractor="v1.2.1"
+github.com/mattn/go-colorable="v0.1.13"
+github.com/mattn/go-isatty="v0.0.20"
+github.com/mattn/go-runewidth="v0.0.9"
+github.com/mitchellh/hashstructure="v1.1.0"
+github.com/mitchellh/mapstructure="v1.5.1-0.20231216201459-8508981c8b6c"
+github.com/mohae/deepcopy="v0.0.0-20170929034955-c48cc78d4826"
+github.com/muesli/smartcrop="v0.3.0"
+github.com/niklasfasching/go-org="v1.7.0"
+github.com/olekukonko/tablewriter="v0.0.5"
+github.com/pbnjay/memory="v0.0.0-20210728143218-7b4eea64cf58"
+github.com/pelletier/go-toml/v2="v2.2.2"
+github.com/perimeterx/marshmallow="v1.1.5"
+github.com/pkg/browser="v0.0.0-20210911075715-681adbf594b8"
+github.com/pkg/errors="v0.9.1"
+github.com/rogpeppe/go-internal="v1.12.0"
+github.com/russross/blackfriday/v2="v2.1.0"
+github.com/rwcarlsen/goexif="v0.0.0-20190401172101-9e8deecbddbd"
+github.com/sass/dart-sass/compiler="1.77.5"
+github.com/sass/dart-sass/implementation="1.77.5"
+github.com/sass/dart-sass/protocol="2.7.1"
+github.com/sass/libsass="3.6.5"
+github.com/spf13/afero="v1.11.0"
+github.com/spf13/cast="v1.6.0"
+github.com/spf13/cobra="v1.8.0"
+github.com/spf13/fsync="v0.10.1"
+github.com/spf13/pflag="v1.0.5"
+github.com/tdewolff/minify/v2="v2.20.20"
+github.com/tdewolff/parse/v2="v2.7.13"
+github.com/webmproject/libwebp="v1.3.2"
+github.com/yuin/goldmark-emoji="v1.0.3"
+github.com/yuin/goldmark="v1.7.4"
+go.opencensus.io="v0.24.0"
+go.uber.org/automaxprocs="v1.5.3"
+gocloud.dev="v0.36.0"
+golang.org/x/crypto="v0.23.0"
+golang.org/x/exp="v0.0.0-20221031165847-c99f073a8326"
+golang.org/x/image="v0.16.0"
+golang.org/x/mod="v0.17.0"
+golang.org/x/net="v0.25.0"
+golang.org/x/oauth2="v0.15.0"
+golang.org/x/sync="v0.7.0"
+golang.org/x/sys="v0.20.0"
+golang.org/x/text="v0.15.0"
+golang.org/x/time="v0.5.0"
+golang.org/x/tools="v0.20.0"
+golang.org/x/xerrors="v0.0.0-20231012003039-104605ab7028"
+google.golang.org/api="v0.152.0"
+google.golang.org/genproto/googleapis/api="v0.0.0-20231120223509-83a465c0220f"
+google.golang.org/genproto/googleapis/rpc="v0.0.0-20231120223509-83a465c0220f"
+google.golang.org/genproto="v0.0.0-20231120223509-83a465c0220f"
+google.golang.org/grpc="v1.59.0"
+google.golang.org/protobuf="v1.33.0"
+gopkg.in/yaml.v2="v2.4.0"
+gopkg.in/yaml.v3="v3.0.1"
+software.sslmate.com/src/go-pkcs12="v0.2.0"
+```
+</details>

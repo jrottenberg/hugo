@@ -1,9 +1,9 @@
-// Copyright © 2013-14 Steve Francia <spf@spf13.com>.
+// Copyright 2024 The Hugo Authors. All rights reserved.
 //
-// Licensed under the Simple Public License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// http://opensource.org/licenses/Simple-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,12 +14,16 @@
 package main
 
 import (
-	"runtime"
+	"log"
+	"os"
 
-	"github.com/spf13/hugo/commands"
+	"github.com/gohugoio/hugo/commands"
 )
 
 func main() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
-	commands.Execute()
+	log.SetFlags(0)
+	err := commands.Execute(os.Args[1:])
+	if err != nil {
+		log.Fatalf("Error: %s", err)
+	}
 }

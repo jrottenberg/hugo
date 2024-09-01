@@ -1,9 +1,9 @@
-// Copyright © 2014 Steve Francia <spf@spf13.com>.
+// Copyright 2019 The Hugo Authors. All rights reserved.
 //
-// Licensed under the Simple Public License, Version 2.0 (the "License");
+// Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// http://opensource.org/licenses/Simple-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -20,105 +20,69 @@ package helpers
 import (
 	"bytes"
 	"html/template"
-	"os/exec"
-
-	"github.com/miekg/mmark"
-	"github.com/russross/blackfriday"
-	bp "github.com/spf13/hugo/bufferpool"
-	jww "github.com/spf13/jwalterweatherman"
-	"github.com/spf13/viper"
-
 	"strings"
-	"sync"
+	"unicode"
+
+	"github.com/gohugoio/hugo/common/hexec"
+	"github.com/gohugoio/hugo/common/loggers"
+	"github.com/gohugoio/hugo/media"
+
+	"github.com/spf13/afero"
+
+	"github.com/gohugoio/hugo/markup/converter"
+
+	"github.com/gohugoio/hugo/markup"
+
+	"github.com/gohugoio/hugo/config"
 )
 
-// Length of the summary that Hugo extracts from a content.
-var SummaryLength = 70
-
-// Custom divider <!--more--> let's user define where summarization ends.
-var SummaryDivider = []byte("<!--more-->")
-
-// Blackfriday holds configuration values for Blackfriday rendering.
-type Blackfriday struct {
-	AngledQuotes   bool
-	Fractions      bool
-	PlainIDAnchors bool
-	Extensions     []string
-	ExtensionsMask []string
+// ContentSpec provides functionality to render markdown content.
+type ContentSpec struct {
+	Converters          markup.ConverterProvider
+	anchorNameSanitizer converter.AnchorNameSanitizer
+	Cfg                 config.AllProvider
 }
 
-// NewBlackfriday creates a new Blackfriday with some sane defaults.
-func NewBlackfriday() *Blackfriday {
-	return &Blackfriday{
-		AngledQuotes:   false,
-		Fractions:      true,
-		PlainIDAnchors: false,
+// NewContentSpec returns a ContentSpec initialized
+// with the appropriate fields from the given config.Provider.
+func NewContentSpec(cfg config.AllProvider, logger loggers.Logger, contentFs afero.Fs, ex *hexec.Exec) (*ContentSpec, error) {
+	spec := &ContentSpec{
+		Cfg: cfg,
 	}
-}
 
-var blackfridayExtensionMap = map[string]int{
-	"noIntraEmphasis":        blackfriday.EXTENSION_NO_INTRA_EMPHASIS,
-	"tables":                 blackfriday.EXTENSION_TABLES,
-	"fencedCode":             blackfriday.EXTENSION_FENCED_CODE,
-	"autolink":               blackfriday.EXTENSION_AUTOLINK,
-	"strikethrough":          blackfriday.EXTENSION_STRIKETHROUGH,
-	"laxHtmlBlocks":          blackfriday.EXTENSION_LAX_HTML_BLOCKS,
-	"spaceHeaders":           blackfriday.EXTENSION_SPACE_HEADERS,
-	"hardLineBreak":          blackfriday.EXTENSION_HARD_LINE_BREAK,
-	"tabSizeEight":           blackfriday.EXTENSION_TAB_SIZE_EIGHT,
-	"footnotes":              blackfriday.EXTENSION_FOOTNOTES,
-	"noEmptyLineBeforeBlock": blackfriday.EXTENSION_NO_EMPTY_LINE_BEFORE_BLOCK,
-	"headerIds":              blackfriday.EXTENSION_HEADER_IDS,
-	"titleblock":             blackfriday.EXTENSION_TITLEBLOCK,
-	"autoHeaderIds":          blackfriday.EXTENSION_AUTO_HEADER_IDS,
-}
-
-var stripHTMLReplacer = strings.NewReplacer("\n", " ", "</p>", "\n", "<br>", "\n", "<br />", "\n")
-
-var mmarkExtensionMap = map[string]int{
-	"tables":                 mmark.EXTENSION_TABLES,
-	"fencedCode":             mmark.EXTENSION_FENCED_CODE,
-	"autolink":               mmark.EXTENSION_AUTOLINK,
-	"laxHtmlBlocks":          mmark.EXTENSION_LAX_HTML_BLOCKS,
-	"spaceHeaders":           mmark.EXTENSION_SPACE_HEADERS,
-	"hardLineBreak":          mmark.EXTENSION_HARD_LINE_BREAK,
-	"footnotes":              mmark.EXTENSION_FOOTNOTES,
-	"noEmptyLineBeforeBlock": mmark.EXTENSION_NO_EMPTY_LINE_BEFORE_BLOCK,
-	"headerIds":              mmark.EXTENSION_HEADER_IDS,
-	"autoHeaderIds":          mmark.EXTENSION_AUTO_HEADER_IDS,
-}
-
-// StripHTML accepts a string, strips out all HTML tags and returns it.
-func StripHTML(s string) string {
-
-	// Shortcut strings with no tags in them
-	if !strings.ContainsAny(s, "<>") {
-		return s
+	converterProvider, err := markup.NewConverterProvider(converter.ProviderConfig{
+		Conf:      cfg,
+		ContentFs: contentFs,
+		Logger:    logger,
+		Exec:      ex,
+	})
+	if err != nil {
+		return nil, err
 	}
-	s = stripHTMLReplacer.Replace(s)
 
-	// Walk through the string removing all tags
-	b := bp.GetBuffer()
-	defer bp.PutBuffer(b)
-
-	inTag := false
-	for _, r := range s {
-		switch r {
-		case '<':
-			inTag = true
-		case '>':
-			inTag = false
-		default:
-			if !inTag {
-				b.WriteRune(r)
-			}
+	spec.Converters = converterProvider
+	p := converterProvider.Get("markdown")
+	conv, err := p.New(converter.DocumentContext{})
+	if err != nil {
+		return nil, err
+	}
+	if as, ok := conv.(converter.AnchorNameSanitizer); ok {
+		spec.anchorNameSanitizer = as
+	} else {
+		// Use Goldmark's sanitizer
+		p := converterProvider.Get("goldmark")
+		conv, err := p.New(converter.DocumentContext{})
+		if err != nil {
+			return nil, err
 		}
+		spec.anchorNameSanitizer = conv.(converter.AnchorNameSanitizer)
 	}
-	return b.String()
+
+	return spec, nil
 }
 
-// StripEmptyNav strips out empty <nav> tags from content.
-func StripEmptyNav(in []byte) []byte {
+// stripEmptyNav strips out empty <nav> tags from content.
+func stripEmptyNav(in []byte) []byte {
 	return bytes.Replace(in, []byte("<nav>\n</nav>\n\n"), []byte(``), -1)
 }
 
@@ -127,124 +91,11 @@ func BytesToHTML(b []byte) template.HTML {
 	return template.HTML(string(b))
 }
 
-// GetHtmlRenderer creates a new Renderer with the given configuration.
-func GetHTMLRenderer(defaultFlags int, ctx *RenderingContext) blackfriday.Renderer {
-	renderParameters := blackfriday.HtmlRendererParameters{
-		FootnoteAnchorPrefix:       viper.GetString("FootnoteAnchorPrefix"),
-		FootnoteReturnLinkContents: viper.GetString("FootnoteReturnLinkContents"),
-	}
-
-	b := len(ctx.DocumentID) != 0
-
-	if b && !ctx.getConfig().PlainIDAnchors {
-		renderParameters.FootnoteAnchorPrefix = ctx.DocumentID + ":" + renderParameters.FootnoteAnchorPrefix
-		renderParameters.HeaderIDSuffix = ":" + ctx.DocumentID
-	}
-
-	htmlFlags := defaultFlags
-	htmlFlags |= blackfriday.HTML_USE_XHTML
-	htmlFlags |= blackfriday.HTML_USE_SMARTYPANTS
-	htmlFlags |= blackfriday.HTML_SMARTYPANTS_LATEX_DASHES
-	htmlFlags |= blackfriday.HTML_FOOTNOTE_RETURN_LINKS
-
-	if ctx.getConfig().AngledQuotes {
-		htmlFlags |= blackfriday.HTML_SMARTYPANTS_ANGLED_QUOTES
-	}
-
-	if ctx.getConfig().Fractions {
-		htmlFlags |= blackfriday.HTML_SMARTYPANTS_FRACTIONS
-	}
-
-	return blackfriday.HtmlRendererWithParameters(htmlFlags, "", "", renderParameters)
-}
-
-func getMarkdownExtensions(ctx *RenderingContext) int {
-	flags := 0 | blackfriday.EXTENSION_NO_INTRA_EMPHASIS |
-		blackfriday.EXTENSION_TABLES | blackfriday.EXTENSION_FENCED_CODE |
-		blackfriday.EXTENSION_AUTOLINK | blackfriday.EXTENSION_STRIKETHROUGH |
-		blackfriday.EXTENSION_SPACE_HEADERS | blackfriday.EXTENSION_FOOTNOTES |
-		blackfriday.EXTENSION_HEADER_IDS | blackfriday.EXTENSION_AUTO_HEADER_IDS
-	for _, extension := range ctx.getConfig().Extensions {
-		if flag, ok := blackfridayExtensionMap[extension]; ok {
-			flags |= flag
-		}
-	}
-	for _, extension := range ctx.getConfig().ExtensionsMask {
-		if flag, ok := blackfridayExtensionMap[extension]; ok {
-			flags &= ^flag
-		}
-	}
-	return flags
-}
-
-func markdownRender(ctx *RenderingContext) []byte {
-	return blackfriday.Markdown(ctx.Content, GetHTMLRenderer(0, ctx),
-		getMarkdownExtensions(ctx))
-}
-
-func markdownRenderWithTOC(ctx *RenderingContext) []byte {
-	return blackfriday.Markdown(ctx.Content,
-		GetHTMLRenderer(blackfriday.HTML_TOC, ctx),
-		getMarkdownExtensions(ctx))
-}
-
-// mmark
-func GetMmarkHtmlRenderer(defaultFlags int, ctx *RenderingContext) mmark.Renderer {
-	renderParameters := mmark.HtmlRendererParameters{
-		FootnoteAnchorPrefix:       viper.GetString("FootnoteAnchorPrefix"),
-		FootnoteReturnLinkContents: viper.GetString("FootnoteReturnLinkContents"),
-	}
-
-	b := len(ctx.DocumentID) != 0
-
-	if b && !ctx.getConfig().PlainIDAnchors {
-		renderParameters.FootnoteAnchorPrefix = ctx.DocumentID + ":" + renderParameters.FootnoteAnchorPrefix
-		// renderParameters.HeaderIDSuffix = ":" + ctx.DocumentId
-	}
-
-	htmlFlags := defaultFlags
-	htmlFlags |= mmark.HTML_FOOTNOTE_RETURN_LINKS
-
-	return mmark.HtmlRendererWithParameters(htmlFlags, "", "", renderParameters)
-}
-
-func GetMmarkExtensions(ctx *RenderingContext) int {
-	flags := 0
-	flags |= mmark.EXTENSION_TABLES
-	flags |= mmark.EXTENSION_FENCED_CODE
-	flags |= mmark.EXTENSION_AUTOLINK
-	flags |= mmark.EXTENSION_SPACE_HEADERS
-	flags |= mmark.EXTENSION_CITATION
-	flags |= mmark.EXTENSION_TITLEBLOCK_TOML
-	flags |= mmark.EXTENSION_HEADER_IDS
-	flags |= mmark.EXTENSION_AUTO_HEADER_IDS
-	flags |= mmark.EXTENSION_UNIQUE_HEADER_IDS
-	flags |= mmark.EXTENSION_FOOTNOTES
-	flags |= mmark.EXTENSION_SHORT_REF
-	flags |= mmark.EXTENSION_NO_EMPTY_LINE_BEFORE_BLOCK
-	flags |= mmark.EXTENSION_INCLUDE
-
-	for _, extension := range ctx.getConfig().Extensions {
-		if flag, ok := mmarkExtensionMap[extension]; ok {
-			flags |= flag
-		}
-	}
-	return flags
-}
-
-func MmarkRender(ctx *RenderingContext) []byte {
-	return mmark.Parse(ctx.Content, GetMmarkHtmlRenderer(0, ctx),
-		GetMmarkExtensions(ctx)).Bytes()
-}
-
-func MmarkRenderWithTOC(ctx *RenderingContext) []byte {
-	return mmark.Parse(ctx.Content,
-		GetMmarkHtmlRenderer(0, ctx),
-		GetMmarkExtensions(ctx)).Bytes()
-}
-
 // ExtractTOC extracts Table of Contents from content.
 func ExtractTOC(content []byte) (newcontent []byte, toc []byte) {
+	if !bytes.Contains(content, []byte("<nav>")) {
+		return content, nil
+	}
 	origContent := make([]byte, len(content))
 	copy(origContent, content)
 	first := []byte(`<nav>
@@ -264,7 +115,7 @@ func ExtractTOC(content []byte) (newcontent []byte, toc []byte) {
 	}
 
 	if startOfTOC < 0 {
-		return StripEmptyNav(content), toc
+		return stripEmptyNav(content), toc
 	}
 	// Need to peek ahead to see if this nav element is actually the right one.
 	correctNav := bytes.Index(content[startOfTOC:peekEnd], []byte(`<li><a href="#`))
@@ -279,170 +130,59 @@ func ExtractTOC(content []byte) (newcontent []byte, toc []byte) {
 	return
 }
 
-// RenderingContext holds contextual information, like content and configuration,
-// for a given content renderin.g
-type RenderingContext struct {
-	Content    []byte
-	PageFmt    string
-	DocumentID string
-	Config     *Blackfriday
-	configInit sync.Once
+func (c *ContentSpec) SanitizeAnchorName(s string) string {
+	return c.anchorNameSanitizer.SanitizeAnchorName(s)
 }
 
-func (c *RenderingContext) getConfig() *Blackfriday {
-	c.configInit.Do(func() {
-		if c.Config == nil {
-			c.Config = NewBlackfriday()
-		}
-	})
-	return c.Config
-}
+func (c *ContentSpec) ResolveMarkup(in string) string {
+	in = strings.ToLower(in)
 
-// RenderBytesWithTOC renders a []byte with table of contents included.
-func RenderBytesWithTOC(ctx *RenderingContext) []byte {
-	switch ctx.PageFmt {
-	default:
-		return markdownRenderWithTOC(ctx)
-	case "markdown":
-		return markdownRenderWithTOC(ctx)
-	case "asciidoc":
-		return []byte(GetAsciidocContent(ctx.Content))
-	case "mmark":
-		return MmarkRenderWithTOC(ctx)
-	case "rst":
-		return []byte(GetRstContent(ctx.Content))
+	if mediaType, found := c.Cfg.ContentTypes().(media.ContentTypes).Types().GetBestMatch(markup.ResolveMarkup(in)); found {
+		return mediaType.SubType
 	}
-}
 
-// RenderBytes renders a []byte.
-func RenderBytes(ctx *RenderingContext) []byte {
-	switch ctx.PageFmt {
-	default:
-		return markdownRender(ctx)
-	case "markdown":
-		return markdownRender(ctx)
-	case "asciidoc":
-		return []byte(GetAsciidocContent(ctx.Content))
-	case "mmark":
-		return MmarkRender(ctx)
-	case "rst":
-		return []byte(GetRstContent(ctx.Content))
+	if conv := c.Converters.Get(in); conv != nil {
+		return markup.ResolveMarkup(conv.Name())
 	}
+
+	return ""
 }
 
-// TotalWords returns an int of the total number of words in a given content.
+// TotalWords counts instance of one or more consecutive white space
+// characters, as defined by unicode.IsSpace, in s.
+// This is a cheaper way of word counting than the obvious len(strings.Fields(s)).
 func TotalWords(s string) int {
-	return len(strings.Fields(s))
-}
-
-// WordCount takes content and returns a map of words and count of each word.
-func WordCount(s string) map[string]int {
-	m := make(map[string]int)
-	for _, f := range strings.Fields(s) {
-		m[f]++
-	}
-
-	return m
-}
-
-// RemoveSummaryDivider removes summary-divider <!--more--> from content.
-func RemoveSummaryDivider(content []byte) []byte {
-	return bytes.Replace(content, SummaryDivider, []byte(""), -1)
-}
-
-// TruncateWords takes content and an int and shortens down the number
-// of words in the content down to the number of int.
-func TruncateWords(s string, max int) string {
-	words := strings.Fields(s)
-	if max > len(words) {
-		return strings.Join(words, " ")
-	}
-
-	return strings.Join(words[:max], " ")
-}
-
-// TruncateWordsToWholeSentence takes content and an int
-// and returns entire sentences from content, delimited by the int
-// and whether it's truncated or not.
-func TruncateWordsToWholeSentence(words []string, max int) (string, bool) {
-	if max >= len(words) {
-		return strings.Join(words, " "), false
-	}
-
-	for counter, word := range words[max:] {
-		if strings.HasSuffix(word, ".") ||
-			strings.HasSuffix(word, "?") ||
-			strings.HasSuffix(word, ".\"") ||
-			strings.HasSuffix(word, "!") {
-			upper := max + counter + 1
-			return strings.Join(words[:upper], " "), (upper < len(words))
+	n := 0
+	inWord := false
+	for _, r := range s {
+		wasInWord := inWord
+		inWord = !unicode.IsSpace(r)
+		if inWord && !wasInWord {
+			n++
 		}
 	}
-
-	return strings.Join(words[:max], " "), true
+	return n
 }
 
-// GetAsciidocContent calls asciidoctor or asciidoc as an external helper
-// to convert AsciiDoc content to HTML.
-func GetAsciidocContent(content []byte) string {
-	cleanContent := bytes.Replace(content, SummaryDivider, []byte(""), 1)
+// TrimShortHTML removes the outer tags from HTML input where (a) the opening
+// tag is present only once with the input, and (b) the opening and closing
+// tags wrap the input after white space removal.
+func (c *ContentSpec) TrimShortHTML(input []byte, markup string) []byte {
+	openingTag := []byte("<p>")
+	closingTag := []byte("</p>")
 
-	path, err := exec.LookPath("asciidoctor")
-	if err != nil {
-		path, err = exec.LookPath("asciidoc")
-		if err != nil {
-			jww.ERROR.Println("asciidoctor / asciidoc not found in $PATH: Please install.\n",
-				"                 Leaving AsciiDoc content unrendered.")
-			return (string(content))
+	if markup == media.DefaultContentTypes.AsciiDoc.SubType {
+		openingTag = []byte("<div class=\"paragraph\">\n<p>")
+		closingTag = []byte("</p>\n</div>")
+	}
+
+	if bytes.Count(input, openingTag) == 1 {
+		input = bytes.TrimSpace(input)
+		if bytes.HasPrefix(input, openingTag) && bytes.HasSuffix(input, closingTag) {
+			input = bytes.TrimPrefix(input, openingTag)
+			input = bytes.TrimSuffix(input, closingTag)
+			input = bytes.TrimSpace(input)
 		}
 	}
-
-	jww.INFO.Println("Rendering with", path, "...")
-	cmd := exec.Command(path, "--safe", "-")
-	cmd.Stdin = bytes.NewReader(cleanContent)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		jww.ERROR.Println(err)
-	}
-
-	asciidocLines := strings.Split(out.String(), "\n")
-	for i, line := range asciidocLines {
-		if strings.HasPrefix(line, "<body") {
-			asciidocLines = (asciidocLines[i+1 : len(asciidocLines)-3])
-		}
-	}
-	return strings.Join(asciidocLines, "\n")
-}
-
-// GetRstContent calls the Python script rst2html as an external helper
-// to convert reStructuredText content to HTML.
-func GetRstContent(content []byte) string {
-	cleanContent := bytes.Replace(content, SummaryDivider, []byte(""), 1)
-
-	path, err := exec.LookPath("rst2html")
-	if err != nil {
-		path, err = exec.LookPath("rst2html.py")
-		if err != nil {
-			jww.ERROR.Println("rst2html / rst2html.py not found in $PATH: Please install.\n",
-				"                 Leaving reStructuredText content unrendered.")
-			return (string(content))
-		}
-	}
-
-	cmd := exec.Command(path, "--leave-comments")
-	cmd.Stdin = bytes.NewReader(cleanContent)
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		jww.ERROR.Println(err)
-	}
-
-	rstLines := strings.Split(out.String(), "\n")
-	for i, line := range rstLines {
-		if strings.HasPrefix(line, "<body>") {
-			rstLines = (rstLines[i+1 : len(rstLines)-3])
-		}
-	}
-	return strings.Join(rstLines, "\n")
+	return input
 }

@@ -1,131 +1,135 @@
+// Copyright 2019 The Hugo Authors. All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package hugolib
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
-	"html/template"
-
-	"github.com/spf13/afero"
-	"github.com/spf13/hugo/hugofs"
-	"github.com/spf13/hugo/source"
-	"github.com/spf13/hugo/target"
-	"github.com/spf13/viper"
+	qt "github.com/frankban/quicktest"
+	"github.com/gohugoio/hugo/deps"
+	"github.com/gohugoio/hugo/resources/kinds"
 )
 
-const SLUG_DOC_1 = "---\ntitle: slug doc 1\nslug: slug-doc-1\naliases:\n - sd1/foo/\n - sd2\n - sd3/\n - sd4.html\n---\nslug doc 1 content\n"
+func TestUglyURLsPerSection(t *testing.T) {
+	t.Parallel()
 
-const SLUG_DOC_2 = `---
-title: slug doc 2
-slug: slug-doc-2
+	c := qt.New(t)
+
+	const dt = `---
+title: Do not go gentle into that good night
 ---
-slug doc 2 content
+
+Wild men who caught and sang the sun in flight,
+And learn, too late, they grieved it on its way,
+Do not go gentle into that good night.
+
 `
 
-const INDEX_TEMPLATE = "{{ range .Data.Pages }}.{{ end }}"
+	cfg, fs := newTestCfg()
 
-func must(err error) {
-	if err != nil {
-		panic(err)
-	}
+	cfg.Set("uglyURLs", map[string]bool{
+		"sect2": true,
+	})
+	configs, err := loadTestConfigFromProvider(cfg)
+	c.Assert(err, qt.IsNil)
+
+	writeSource(t, fs, filepath.Join("content", "sect1", "p1.md"), dt)
+	writeSource(t, fs, filepath.Join("content", "sect2", "p2.md"), dt)
+
+	s := buildSingleSite(t, deps.DepsCfg{Fs: fs, Configs: configs}, BuildCfg{SkipRender: true})
+
+	c.Assert(len(s.RegularPages()), qt.Equals, 2)
+
+	notUgly := s.getPageOldVersion(kinds.KindPage, "sect1/p1.md")
+	c.Assert(notUgly, qt.Not(qt.IsNil))
+	c.Assert(notUgly.Section(), qt.Equals, "sect1")
+	c.Assert(notUgly.RelPermalink(), qt.Equals, "/sect1/p1/")
+
+	ugly := s.getPageOldVersion(kinds.KindPage, "sect2/p2.md")
+	c.Assert(ugly, qt.Not(qt.IsNil))
+	c.Assert(ugly.Section(), qt.Equals, "sect2")
+	c.Assert(ugly.RelPermalink(), qt.Equals, "/sect2/p2.html")
 }
 
-func mustReturn(ret *Page, err error) *Page {
-	if err != nil {
-		panic(err)
+func TestSectionWithURLInFrontMatter(t *testing.T) {
+	t.Parallel()
+
+	c := qt.New(t)
+
+	const st = `---
+title: Do not go gentle into that good night
+url: %s
+---
+
+Wild men who caught and sang the sun in flight,
+And learn, too late, they grieved it on its way,
+Do not go gentle into that good night.
+
+`
+
+	const pt = `---
+title: Wild men who caught and sang the sun in flight
+---
+
+Wild men who caught and sang the sun in flight,
+And learn, too late, they grieved it on its way,
+Do not go gentle into that good night.
+
+`
+
+	cfg, fs := newTestCfg()
+	cfg.Set("paginate", 1)
+	th, configs := newTestHelperFromProvider(cfg, fs, t)
+
+	writeSource(t, fs, filepath.Join("content", "sect1", "_index.md"), fmt.Sprintf(st, "/ss1/"))
+	writeSource(t, fs, filepath.Join("content", "sect2", "_index.md"), fmt.Sprintf(st, "/ss2/"))
+
+	for i := 0; i < 5; i++ {
+		writeSource(t, fs, filepath.Join("content", "sect1", fmt.Sprintf("p%d.md", i+1)), pt)
+		writeSource(t, fs, filepath.Join("content", "sect2", fmt.Sprintf("p%d.md", i+1)), pt)
 	}
-	return ret
+
+	writeSource(t, fs, filepath.Join("layouts", "_default", "single.html"), "<html><body>{{.Content}}</body></html>")
+	writeSource(t, fs, filepath.Join("layouts", "_default", "list.html"),
+		"<html><body>P{{.Paginator.PageNumber}}|URL: {{.Paginator.URL}}|{{ if .Paginator.HasNext }}Next: {{.Paginator.Next.URL }}{{ end }}</body></html>")
+
+	s := buildSingleSite(t, deps.DepsCfg{Fs: fs, Configs: configs}, BuildCfg{})
+
+	c.Assert(len(s.RegularPages()), qt.Equals, 10)
+
+	sect1 := s.getPageOldVersion(kinds.KindSection, "sect1")
+	c.Assert(sect1, qt.Not(qt.IsNil))
+	c.Assert(sect1.RelPermalink(), qt.Equals, "/ss1/")
+	th.assertFileContent(filepath.Join("public", "ss1", "index.html"), "P1|URL: /ss1/|Next: /ss1/page/2/")
+	th.assertFileContent(filepath.Join("public", "ss1", "page", "2", "index.html"), "P2|URL: /ss1/page/2/|Next: /ss1/page/3/")
 }
 
-type InMemoryAliasTarget struct {
-	target.HTMLRedirectAlias
-	files map[string][]byte
-}
+func TestSectionsEntries(t *testing.T) {
+	files := `
+-- hugo.toml --
+-- content/withfile/_index.md --
+-- content/withoutfile/p1.md --
+-- layouts/_default/list.html --
+SectionsEntries: {{ .SectionsEntries }}
 
-func (t *InMemoryAliasTarget) Publish(label string, permalink template.HTML) (err error) {
-	f, _ := t.Translate(label)
-	t.files[f] = []byte("--dummy text--")
-	return
-}
 
-var urlFakeSource = []source.ByteSource{
-	{filepath.FromSlash("content/blue/doc1.md"), []byte(SLUG_DOC_1)},
-	{filepath.FromSlash("content/blue/doc2.md"), []byte(SLUG_DOC_2)},
-}
+`
 
-// Issue #1105
-func TestShouldNotAddTrailingSlashToBaseURL(t *testing.T) {
-	viper.Reset()
-	defer viper.Reset()
+	b := Test(t, files)
 
-	for i, this := range []struct {
-		in       string
-		expected string
-	}{
-		{"http://base.com/", "http://base.com/"},
-		{"http://base.com/sub/", "http://base.com/sub/"},
-		{"http://base.com/sub", "http://base.com/sub"},
-		{"http://base.com", "http://base.com"}} {
-
-		viper.Set("BaseURL", this.in)
-		s := &Site{}
-		s.initializeSiteInfo()
-
-		if s.Info.BaseURL != template.URL(this.expected) {
-			t.Errorf("[%d] got %s expected %s", i, s.Info.BaseURL, this.expected)
-		}
-	}
-
-}
-
-func TestPageCount(t *testing.T) {
-	viper.Reset()
-	defer viper.Reset()
-
-	hugofs.DestinationFS = new(afero.MemMapFs)
-
-	viper.Set("uglyurls", false)
-	viper.Set("paginate", 10)
-	s := &Site{
-		Source: &source.InMemorySource{ByteSource: urlFakeSource},
-	}
-	s.initializeSiteInfo()
-	s.prepTemplates()
-	must(s.addTemplate("indexes/blue.html", INDEX_TEMPLATE))
-
-	if err := s.CreatePages(); err != nil {
-		t.Errorf("Unable to create pages: %s", err)
-	}
-	if err := s.BuildSiteMeta(); err != nil {
-		t.Errorf("Unable to build site metadata: %s", err)
-	}
-
-	if err := s.RenderSectionLists(); err != nil {
-		t.Errorf("Unable to render section lists: %s", err)
-	}
-
-	if err := s.RenderAliases(); err != nil {
-		t.Errorf("Unable to render site lists: %s", err)
-	}
-
-	_, err := hugofs.DestinationFS.Open("blue")
-	if err != nil {
-		t.Errorf("No indexed rendered.")
-	}
-
-	//expected := ".."
-	//if string(blueIndex) != expected {
-	//t.Errorf("Index template does not match expected: %q, got: %q", expected, string(blueIndex))
-	//}
-
-	for _, s := range []string{
-		"sd1/foo/index.html",
-		"sd2/index.html",
-		"sd3/index.html",
-		"sd4.html",
-	} {
-		if _, err := hugofs.DestinationFS.Open(filepath.FromSlash(s)); err != nil {
-			t.Errorf("No alias rendered: %s", s)
-		}
-	}
+	b.AssertFileContent("public/withfile/index.html", "SectionsEntries: [withfile]")
+	b.AssertFileContent("public/withoutfile/index.html", "SectionsEntries: [withoutfile]")
 }
